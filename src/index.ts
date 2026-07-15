@@ -19,7 +19,7 @@ app.use((req, res, next) => {
 });
 // Liveness probe
 app.get("/health", (_req, res) => {
-  res.json({ status: "ok", service: "veloxous-backend" });
+  res.json({ status: "ok", service: "veloxous-backend", uptime: process.uptime() });
 });
 
 // Example webhook endpoint for Supabase / Soroban events
