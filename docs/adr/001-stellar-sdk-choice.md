@@ -6,7 +6,7 @@ Accepted
 
 ## Context
 
-The Heliobond backend needs to interact with Soroban smart contracts on the Stellar blockchain. Specifically, it must:
+The Veloxous backend needs to interact with Soroban smart contracts on the Stellar blockchain. Specifically, it must:
 
 - Submit `update_impact_score` transactions to the ProjectRegistry contract
 - Query contract state (e.g., `getTotalProjects`)
