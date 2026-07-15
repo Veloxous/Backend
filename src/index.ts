@@ -30,6 +30,12 @@ app.post("/webhooks/escrow", (req, res) => {
   res.status(200).send("OK");
 });
 
+// Global error handler
+app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
+  console.error("[error]", err);
+  res.status(500).json({ error: "Internal Server Error" });
+});
+
 app.listen(PORT, () => {
   console.log(`Veloxous backend listening on port ${PORT}`);
 });
