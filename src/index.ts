@@ -12,6 +12,11 @@ app.use(helmet());
 app.use(cors({ origin: process.env.FRONTEND_URL || "*" }));
 app.use(express.json());
 
+// Request logger middleware
+app.use((req, res, next) => {
+  console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
+  next();
+});
 // Liveness probe
 app.get("/health", (_req, res) => {
   res.json({ status: "ok", service: "veloxous-backend" });
