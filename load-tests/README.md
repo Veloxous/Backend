@@ -1,6 +1,6 @@
 # Load Testing
 
-This directory contains [k6](https://k6.io/) load tests for the Heliobond backend API.
+This directory contains [k6](https://k6.io/) load tests for the Veloxous backend API.
 
 ## Prerequisites
 

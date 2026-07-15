@@ -1,6 +1,6 @@
 # Development Setup Guide
 
-Comprehensive guide for new developers to set up and run the Heliobond backend locally.
+Comprehensive guide for new developers to set up and run the Veloxous backend locally.
 
 ## Prerequisites
 
@@ -14,7 +14,7 @@ Comprehensive guide for new developers to set up and run the Heliobond backend l
 
 ```bash
 # Clone the repository
-git clone https://github.com/Heliobond/backend.git
+git clone https://github.com/Veloxous/backend.git
 cd backend
 
 # Install dependencies
