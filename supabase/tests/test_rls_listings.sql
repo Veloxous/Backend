@@ -1,3 +1,5 @@
+BEGIN;
+
 -- Plan: 2 tests (RLS status, updated_at trigger)
 SELECT plan(2);
 
@@ -21,4 +23,3 @@ SELECT ok(
 SELECT * FROM finish();
 
 ROLLBACK;
-
