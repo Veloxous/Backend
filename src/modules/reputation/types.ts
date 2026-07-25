@@ -16,3 +16,16 @@ export interface Dispute {
   winnerId: string | null;
   loserId: string | null;
 }
+
+export interface ReputationProfile {
+  userId: string;
+  trustScore: number;
+  totalTransactions: number;
+  successfulTransactions: number;
+  disputesWon: number;
+  disputesLost: number;
+  createdAt: Date;
+  updatedAt: Date;
+  isElite: boolean;
+  isSuspended: boolean;
+}
