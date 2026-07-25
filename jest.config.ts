@@ -6,7 +6,7 @@ export default {
   collectCoverageFrom: ["src/**/*.ts", "!src/**/__tests__/**"],
   coverageDirectory: "coverage",
   coverageReporters: ["text", "text-summary", "lcov", "json-summary"],
-  coverageThreshold: {
+  coverageThresholds: {
     global: {
       branches: 50,
       functions: 50,
