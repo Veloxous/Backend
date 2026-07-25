@@ -73,3 +73,35 @@ export function calculateReputation(userId: string): ReputationProfile {
   profiles.set(userId, profile);
   return profile;
 }
+
+export function getProfile(userId: string): ReputationProfile | undefined {
+  return profiles.get(userId);
+}
+
+export function getReputationApiResponse(userId: string): ReputationApiResponse | null {
+  const profile = profiles.get(userId);
+  if (!profile) return null;
+
+  const userDisputes = disputes.get(userId) || [];
+  const lastDispute = userDisputes
+    .sort((a, b) => b.resolvedAt.getTime() - a.resolvedAt.getTime())[0];
+
+  const lastDisputeDaysAgo = lastDispute
+    ? Math.floor(
+        (Date.now() - lastDispute.resolvedAt.getTime()) / (1000 * 60 * 60 * 24)
+      )
+    : null;
+
+  return {
+    userId: profile.userId,
+    trustScore: profile.trustScore,
+    totalTransactions: profile.totalTransactions,
+    successRate:
+      profile.totalTransactions > 0
+        ? Math.round((profile.successfulTransactions / profile.totalTransactions) * 10000) / 100
+        : 0,
+    lastDisputeDaysAgo,
+    isElite: profile.isElite,
+    isSuspended: profile.isSuspended,
+  };
+}
