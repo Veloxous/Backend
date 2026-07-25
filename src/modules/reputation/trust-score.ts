@@ -20,3 +20,17 @@ export function detectLongestStreak(
   );
   let longestStreak = 0;
   let currentStreak = 0;
+
+  for (const tx of sorted) {
+    const isParticipant =
+      tx.buyerId === userId || tx.sellerId === userId;
+    if (isParticipant) {
+      currentStreak++;
+      longestStreak = Math.max(longestStreak, currentStreak);
+    } else {
+      currentStreak = 0;
+    }
+  }
+
+  return longestStreak;
+}
