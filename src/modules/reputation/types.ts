@@ -39,3 +39,13 @@ export interface TrustScoreBreakdown {
   sybilPenalty: number;
   finalScore: number;
 }
+
+export interface ReputationApiResponse {
+  userId: string;
+  trustScore: number;
+  totalTransactions: number;
+  successRate: number;
+  lastDisputeDaysAgo: number | null;
+  isElite: boolean;
+  isSuspended: boolean;
+}
