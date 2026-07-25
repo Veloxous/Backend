@@ -57,6 +57,11 @@ export function calculateReputation(userId: string): ReputationProfile {
   );
 
   const existingProfile = profiles.get(userId);
+
+  const previousTier = existingProfile
+    ? existingProfile.isElite ? "elite" : existingProfile.isSuspended ? "suspended" : "standard"
+    : "standard";
+
   const profile: ReputationProfile = {
     userId,
     trustScore: finalScore,
@@ -71,6 +76,18 @@ export function calculateReputation(userId: string): ReputationProfile {
   };
 
   profiles.set(userId, profile);
+
+  const newTier = profile.isElite ? "elite" : profile.isSuspended ? "suspended" : "standard";
+  if (previousTier !== newTier && existingProfile) {
+    emitTierChange({
+      userId,
+      previousTier,
+      newTier,
+      trustScore: finalScore,
+      timestamp: new Date(),
+    });
+  }
+
   return profile;
 }
 
@@ -116,4 +133,24 @@ export function getActiveUserIds(): string[] {
   }
 
   return [...new Set(activeUserIds)];
+}
+
+export interface TierChangeEvent {
+  userId: string;
+  previousTier: "standard" | "elite" | "suspended";
+  newTier: "standard" | "elite" | "suspended";
+  trustScore: number;
+  timestamp: Date;
+}
+
+const tierChangeListeners: ((event: TierChangeEvent) => void)[] = [];
+
+export function onTierChange(listener: (event: TierChangeEvent) => void): void {
+  tierChangeListeners.push(listener);
+}
+
+function emitTierChange(event: TierChangeEvent): void {
+  for (const listener of tierChangeListeners) {
+    listener(event);
+  }
 }
