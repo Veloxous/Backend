@@ -61,3 +61,21 @@ export interface ScoringConfig {
   maxPairwiseTransactions: number;
   halfLifeMonths: number;
 }
+
+export interface DeviceFingerprint {
+  userId: string;
+  ipAddress: string;
+  fingerprint: string;
+  createdAt: Date;
+}
+
+export interface PairwiseTransactionCount {
+  userA: string;
+  userB: string;
+  count: number;
+}
+
+export interface ReputationJobPayload {
+  userId: string;
+  trigger: "hourly" | "escrow_complete" | "manual";
+}
