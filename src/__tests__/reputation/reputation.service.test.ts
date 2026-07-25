@@ -14,7 +14,7 @@ describe("calculateReputation", () => {
   });
 
   it("applies Elite badge at score >= 90", () => {
-    const txs: Transaction[] = Array.from({ length: 20 }, (_, i) => ({
+    const txs: Transaction[] = Array.from({ length: 40 }, (_, i) => ({
       id: `tx-${i}`, buyerId: "user-1", sellerId: `seller-${i}`,
       amount: 100, currency: "USDC", completedAt: new Date(), category: "buy",
     }));
