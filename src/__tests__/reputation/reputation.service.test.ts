@@ -23,4 +23,56 @@ describe("calculateReputation", () => {
     expect(profile.trustScore).toBeGreaterThanOrEqual(90);
     expect(profile.isElite).toBe(true);
   });
+
+  it("suspends user when score drops below 20", () => {
+    const disputes: Dispute[] = Array.from({ length: 3 }, (_, i) => ({
+      id: `disp-${i}`, reporterId: "other", respondentId: "user-1",
+      resolvedAt: new Date(), winnerId: "other", loserId: "user-1",
+    }));
+    disputes.forEach(addDispute);
+    const profile = calculateReputation("user-1");
+    expect(profile.trustScore).toBeLessThan(20);
+    expect(profile.isSuspended).toBe(true);
+  });
+});
+
+describe("getReputationApiResponse", () => {
+  it("returns null for unknown user", () => {
+    expect(getReputationApiResponse("unknown")).toBeNull();
+  });
+
+  it("returns sanitized response with success rate", () => {
+    const txs: Transaction[] = Array.from({ length: 10 }, (_, i) => ({
+      id: `tx-${i}`, buyerId: "user-1", sellerId: `seller-${i}`,
+      amount: 50, currency: "USDC", completedAt: new Date(), category: "buy",
+    }));
+    txs.forEach(addTransaction);
+    calculateReputation("user-1");
+    const response = getReputationApiResponse("user-1");
+    expect(response).not.toBeNull();
+    expect(response!.successRate).toBe(100);
+    expect(response!.totalTransactions).toBe(10);
+  });
+});
+
+describe("getActiveUserIds", () => {
+  it("returns users with recent transactions", () => {
+    const txs: Transaction[] = [
+      { id: "tx-1", buyerId: "user-1", sellerId: "user-2", amount: 50, currency: "USDC", completedAt: new Date(), category: "buy" },
+    ];
+    txs.forEach(addTransaction);
+    const active = getActiveUserIds();
+    expect(active).toContain("user-1");
+    expect(active).toContain("user-2");
+  });
+
+  it("excludes users with only old transactions", () => {
+    const oldDate = new Date(Date.now() - 60 * 24 * 60 * 60 * 1000);
+    const txs: Transaction[] = [
+      { id: "tx-1", buyerId: "user-1", sellerId: "user-2", amount: 50, currency: "USDC", completedAt: oldDate, category: "buy" },
+    ];
+    txs.forEach(addTransaction);
+    const active = getActiveUserIds();
+    expect(active).toHaveLength(0);
+  });
 });
