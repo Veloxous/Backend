@@ -56,3 +56,17 @@ export function calculateTrustScore(
     transactionBonus += 1.0 * decay;
     timeDecayAdjustment += decay;
   }
+
+  const longestStreak = detectLongestStreak(transactions, userId);
+  const streakBonus =
+    longestStreak >= config.streakThreshold ? config.streakBonus : 0;
+
+  const disputePenalty = disputesLost * config.disputePenalty;
+
+  const baseScore = config.initialScore;
+  const rawScore =
+    baseScore + transactionBonus + streakBonus - disputePenalty;
+  const finalScore = Math.max(
+    config.minScore,
+    Math.min(config.maxScore, Math.round(rawScore * 100) / 100)
+  );
