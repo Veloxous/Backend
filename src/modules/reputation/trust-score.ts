@@ -45,3 +45,14 @@ export function calculateTrustScore(
   const nowMs = now.getTime();
   let transactionBonus = 0;
   let timeDecayAdjustment = 0;
+
+  const userTransactions = transactions.filter(
+    (tx) => tx.buyerId === userId || tx.sellerId === userId
+  );
+
+  for (const tx of userTransactions) {
+    if (tx.amount < config.minTransactionAmount) continue;
+    const decay = calculateTimeDecay(tx.completedAt, now, config.halfLifeMonths);
+    transactionBonus += 1.0 * decay;
+    timeDecayAdjustment += decay;
+  }
