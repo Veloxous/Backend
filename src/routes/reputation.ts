@@ -15,3 +15,13 @@ router.get("/users/:id/reputation", async (req: Request, res: Response) => {
 
   res.json(response);
 });
+
+router.post("/users/:id/reputation/recalculate", async (req: Request, res: Response) => {
+  const { id } = req.params;
+
+  await enqueueReputationCalculation({ userId: id, trigger: "manual" });
+
+  res.json({ message: "Recalculation queued", userId: id });
+});
+
+export default router;
