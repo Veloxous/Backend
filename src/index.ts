@@ -2,6 +2,8 @@ import express from "express";
 import cors from "cors";
 import helmet from "helmet";
 import dotenv from "dotenv";
+import reputationRoutes from "./routes/reputation";
+import { startHourlyReputationJob } from "./jobs/calculate-reputation.job";
 
 dotenv.config();
 
@@ -30,6 +32,9 @@ app.post("/webhooks/escrow", (req, res) => {
   res.status(200).send("OK");
 });
 
+// Reputation routes
+app.use("/api", reputationRoutes);
+
 // Global error handler
 app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
   console.error("[error]", err);
@@ -38,4 +43,5 @@ app.use((err: any, req: express.Request, res: express.Response, next: express.Ne
 
 app.listen(PORT, () => {
   console.log(`Veloxous backend listening on port ${PORT}`);
+  startHourlyReputationJob();
 });
