@@ -49,3 +49,15 @@ export interface ReputationApiResponse {
   isElite: boolean;
   isSuspended: boolean;
 }
+
+export interface ScoringConfig {
+  initialScore: number;
+  maxScore: number;
+  minScore: number;
+  disputePenalty: number;
+  streakThreshold: number;
+  streakBonus: number;
+  minTransactionAmount: number;
+  maxPairwiseTransactions: number;
+  halfLifeMonths: number;
+}
