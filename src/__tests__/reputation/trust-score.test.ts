@@ -15,3 +15,25 @@ describe("calculateTimeDecay", () => {
     expect(decay).toBeCloseTo(0.5, 2);
   });
 });
+
+describe("detectLongestStreak", () => {
+  const userId = "user-1";
+
+  it("returns 0 for no transactions", () => {
+    expect(detectLongestStreak([], userId)).toBe(0);
+  });
+
+  it("counts consecutive transactions for user", () => {
+    const txs: Transaction[] = Array.from({ length: 5 }, (_, i) => ({
+      id: `tx-${i}`,
+      buyerId: i % 2 === 0 ? userId : "other",
+      sellerId: i % 2 === 0 ? "other" : userId,
+      amount: 50,
+      currency: "USDC",
+      completedAt: new Date(Date.now() + i * 86400000),
+      category: "buy",
+    }));
+
+    expect(detectLongestStreak(txs, userId)).toBe(5);
+  });
+});
