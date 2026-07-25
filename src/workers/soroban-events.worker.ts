@@ -131,7 +131,7 @@ export class SorobanEventsWorker {
     // We try to interpret the topic[0] to determine event type
     if (event.topic && event.topic.length > 0) {
        try {
-           const topicVal = xdr.ScVal.fromXDR(event.topic[0], "base64");
+           const topicVal = xdr.ScVal.fromXDR(event.topic[0] as unknown as string, "base64");
            if (topicVal.switch() === xdr.ScValType.scvSymbol()) {
                parsed.event_type = topicVal.sym().toString();
            }
