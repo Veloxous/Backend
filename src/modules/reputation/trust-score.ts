@@ -42,7 +42,6 @@ export function calculateTrustScore(
   config: ScoringConfig = DEFAULT_SCORING_CONFIG
 ): TrustScoreBreakdown {
   const now = new Date();
-  const nowMs = now.getTime();
   let transactionBonus = 0;
   let timeDecayAdjustment = 0;
 
@@ -70,3 +69,14 @@ export function calculateTrustScore(
     config.minScore,
     Math.min(config.maxScore, Math.round(rawScore * 100) / 100)
   );
+
+  return {
+    baseScore,
+    transactionBonus: Math.round(transactionBonus * 100) / 100,
+    timeDecayAdjustment: Math.round(timeDecayAdjustment * 100) / 100,
+    disputePenalty,
+    streakBonus,
+    sybilPenalty: 0,
+    finalScore,
+  };
+}
