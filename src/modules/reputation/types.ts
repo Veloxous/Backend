@@ -29,3 +29,13 @@ export interface ReputationProfile {
   isElite: boolean;
   isSuspended: boolean;
 }
+
+export interface TrustScoreBreakdown {
+  baseScore: number;
+  transactionBonus: number;
+  timeDecayAdjustment: number;
+  disputePenalty: number;
+  streakBonus: number;
+  sybilPenalty: number;
+  finalScore: number;
+}
