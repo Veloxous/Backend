@@ -1,5 +1,25 @@
-import { Transaction, PairwiseTransactionCount } from "./types";
+import { Transaction, PairwiseTransactionCount, DeviceFingerprint } from "./types";
 import { DEFAULT_SCORING_CONFIG } from "./config";
+
+export function detectSharedFingerprints(
+  userId: string,
+  fingerprints: DeviceFingerprint[],
+  partnerIds: string[]
+): boolean {
+  const userFps = fingerprints
+    .filter((fp) => fp.userId === userId)
+    .map((fp) => fp.fingerprint);
+
+  for (const partnerId of partnerIds) {
+    const partnerFps = fingerprints
+      .filter((fp) => fp.userId === partnerId)
+      .map((fp) => fp.fingerprint);
+    const shared = userFps.filter((fp) => partnerFps.includes(fp));
+    if (shared.length > 0) return true;
+  }
+
+  return false;
+}
 
 export function buildPairwiseCounts(
   transactions: Transaction[]
