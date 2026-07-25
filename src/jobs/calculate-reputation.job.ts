@@ -15,3 +15,23 @@ export const reputationQueue = new Queue("reputation-calculation", {
     removeOnFail: { count: 500 },
   },
 });
+
+export const reputationWorker = new Worker(
+  "reputation-calculation",
+  async (job: Job<ReputationJobPayload>) => {
+    const { userId, trigger } = job.data;
+    const profile = calculateReputation(userId);
+    return { userId, trustScore: profile.trustScore, trigger };
+  },
+  { connection, concurrency: 10 }
+);
+
+export async function enqueueReputationCalculation(
+  payload: ReputationJobPayload
+): Promise<void> {
+  await reputationQueue.add(
+    `reputation-${payload.userId}`,
+    payload,
+    { jobId: `rep-${payload.userId}-${Date.now()}` }
+  );
+}
