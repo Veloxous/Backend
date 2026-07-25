@@ -2,6 +2,7 @@ import express from "express";
 import cors from "cors";
 import helmet from "helmet";
 import dotenv from "dotenv";
+import { SorobanEventsWorker } from "./workers/soroban-events.worker";
 
 dotenv.config();
 
@@ -38,4 +39,12 @@ app.use((err: any, req: express.Request, res: express.Response, next: express.Ne
 
 app.listen(PORT, () => {
   console.log(`Veloxous backend listening on port ${PORT}`);
+  
+  // Start Soroban Events Worker
+  if (process.env.NODE_ENV !== 'test') {
+    const worker = new SorobanEventsWorker();
+    worker.start().catch(err => {
+      console.error("Failed to start Soroban worker:", err);
+    });
+  }
 });
