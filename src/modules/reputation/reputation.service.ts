@@ -40,3 +40,36 @@ export function addFingerprint(fp: DeviceFingerprint): void {
   existing.push(fp);
   fingerprints.set(fp.userId, existing);
 }
+
+export function calculateReputation(userId: string): ReputationProfile {
+  const userTxs = transactions.get(userId) || [];
+  const userDisputes = disputes.get(userId) || [];
+  const disputesLost = userDisputes.filter((d) => d.loserId === userId).length;
+
+  const scoreBreakdown = calculateTrustScore(userId, userTxs, disputesLost);
+
+  const fpList = Array.from(fingerprints.values()).flat();
+  const sybilResult = calculateSybilPenalty(userId, userTxs, fpList);
+
+  const finalScore = Math.max(
+    0,
+    Math.min(100, scoreBreakdown.finalScore - sybilResult.penalty)
+  );
+
+  const existingProfile = profiles.get(userId);
+  const profile: ReputationProfile = {
+    userId,
+    trustScore: finalScore,
+    totalTransactions: userTxs.length,
+    successfulTransactions: userTxs.length,
+    disputesWon: userDisputes.filter((d) => d.winnerId === userId).length,
+    disputesLost,
+    createdAt: existingProfile?.createdAt || new Date(),
+    updatedAt: new Date(),
+    isElite: finalScore >= 90,
+    isSuspended: finalScore < 20,
+  };
+
+  profiles.set(userId, profile);
+  return profile;
+}
