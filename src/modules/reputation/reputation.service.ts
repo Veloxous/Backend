@@ -105,3 +105,15 @@ export function getReputationApiResponse(userId: string): ReputationApiResponse 
     isSuspended: profile.isSuspended,
   };
 }
+
+export function getActiveUserIds(): string[] {
+  const activeThreshold = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+  const activeUserIds: string[] = [];
+
+  for (const [userId, txs] of transactions) {
+    const recentTx = txs.find((tx) => tx.completedAt > activeThreshold);
+    if (recentTx) activeUserIds.push(userId);
+  }
+
+  return [...new Set(activeUserIds)];
+}
