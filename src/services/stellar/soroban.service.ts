@@ -72,7 +72,7 @@ export class SorobanService {
     // The stellar SDK getEvents signature doesn't take endLedger directly, it just streams from startLedger up to a limit.
     // We should filter them in-memory to not exceed endLedger.
     if (endLedger !== undefined) {
-      events = events.filter(e => parseInt(e.ledger, 10) <= endLedger);
+      events = events.filter(e => Number(e.ledger) <= endLedger);
     }
     
     return events;
