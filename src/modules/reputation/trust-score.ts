@@ -34,3 +34,14 @@ export function detectLongestStreak(
 
   return longestStreak;
 }
+
+export function calculateTrustScore(
+  userId: string,
+  transactions: Transaction[],
+  disputesLost: number,
+  config: ScoringConfig = DEFAULT_SCORING_CONFIG
+): TrustScoreBreakdown {
+  const now = new Date();
+  const nowMs = now.getTime();
+  let transactionBonus = 0;
+  let timeDecayAdjustment = 0;
