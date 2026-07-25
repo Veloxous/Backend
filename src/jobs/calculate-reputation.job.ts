@@ -1,7 +1,8 @@
 import { Queue, Worker, Job } from "bullmq";
 import IORedis from "ioredis";
+import cron from "node-cron";
 import { ReputationJobPayload } from "../modules/reputation/types";
-import { calculateReputation } from "../modules/reputation/reputation.service";
+import { calculateReputation, getActiveUserIds } from "../modules/reputation/reputation.service";
 
 const REDIS_URL = process.env.REDIS_URL || "redis://localhost:6379";
 const connection = new IORedis(REDIS_URL, { maxRetriesPerRequest: null });
@@ -34,4 +35,19 @@ export async function enqueueReputationCalculation(
     payload,
     { jobId: `rep-${payload.userId}-${Date.now()}` }
   );
+}
+
+export function startHourlyReputationJob(): void {
+  cron.schedule("0 * * * *", async () => {
+    const activeUserIds = getActiveUserIds();
+    for (const userId of activeUserIds) {
+      await enqueueReputationCalculation({ userId, trigger: "hourly" });
+    }
+  });
+}
+
+export async function shutdownJobs(): Promise<void> {
+  await reputationWorker.close();
+  await reputationQueue.close();
+  await connection.quit();
 }
