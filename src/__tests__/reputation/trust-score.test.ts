@@ -37,3 +37,50 @@ describe("detectLongestStreak", () => {
     expect(detectLongestStreak(txs, userId)).toBe(5);
   });
 });
+
+describe("calculateTrustScore", () => {
+  const userId = "user-1";
+
+  it("returns initial score of 50 with no transactions", () => {
+    const result = calculateTrustScore(userId, [], 0);
+    expect(result.finalScore).toBe(50);
+    expect(result.baseScore).toBe(50);
+  });
+
+  it("increases score with qualifying transactions", () => {
+    const txs: Transaction[] = [
+      { id: "tx-1", buyerId: userId, sellerId: "other", amount: 100, currency: "USDC", completedAt: new Date(), category: "buy" },
+    ];
+    const result = calculateTrustScore(userId, txs, 0);
+    expect(result.finalScore).toBeGreaterThan(50);
+  });
+
+  it("ignores transactions below minimum amount", () => {
+    const txs: Transaction[] = [
+      { id: "tx-1", buyerId: userId, sellerId: "other", amount: 5, currency: "USDC", completedAt: new Date(), category: "buy" },
+    ];
+    const result = calculateTrustScore(userId, txs, 0);
+    expect(result.finalScore).toBe(50);
+  });
+
+  it("applies dispute penalty", () => {
+    const result = calculateTrustScore(userId, [], 2);
+    expect(result.finalScore).toBe(20);
+    expect(result.disputePenalty).toBe(30);
+  });
+
+  it("clamps score to max of 100", () => {
+    const txs: Transaction[] = Array.from({ length: 100 }, (_, i) => ({
+      id: `tx-${i}`, buyerId: userId, sellerId: "other",
+      amount: 100, currency: "USDC",
+      completedAt: new Date(), category: "buy",
+    }));
+    const result = calculateTrustScore(userId, txs, 0);
+    expect(result.finalScore).toBeLessThanOrEqual(100);
+  });
+
+  it("clamps score to min of 0", () => {
+    const result = calculateTrustScore(userId, [], 4);
+    expect(result.finalScore).toBe(0);
+  });
+});
