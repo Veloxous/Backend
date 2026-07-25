@@ -1,15 +1,16 @@
 -- Migration: 001_init_listings_and_add_deleted_at
 -- Description: Create listings table, add deleted_at column, and implement RLS policies.
 
-DROP TABLE IF EXISTS public.listings CASCADE;
-
-CREATE TABLE public.listings (
+-- Create table if it doesn't exist
+CREATE TABLE IF NOT EXISTS public.listings (
     id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
     owner_id UUID DEFAULT auth.uid(),
     created_at TIMESTAMPTZ DEFAULT NOW(),
-    updated_at TIMESTAMPTZ DEFAULT NOW(),
-    deleted_at TIMESTAMPTZ DEFAULT NULL::timestamptz
+    updated_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+-- Ensure columns exist
+ALTER TABLE public.listings ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ DEFAULT NULL::timestamptz;
 
 -- Enable RLS
 ALTER TABLE public.listings ENABLE ROW LEVEL SECURITY;
@@ -39,6 +40,7 @@ END;
 $$ language 'plpgsql';
 
 -- Create trigger
+DROP TRIGGER IF EXISTS update_listings_updated_at ON public.listings;
 CREATE TRIGGER update_listings_updated_at
     BEFORE UPDATE ON public.listings
     FOR EACH ROW
