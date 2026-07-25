@@ -58,3 +58,30 @@ export function getExcessPairwiseTransactions(
 
   return excess;
 }
+
+export function calculateSybilPenalty(
+  userId: string,
+  transactions: Transaction[],
+  fingerprints: DeviceFingerprint[]
+): { penalty: number; isSybil: boolean } {
+  const pairwiseCounts = buildPairwiseCounts(transactions);
+  const excessTxs = getExcessPairwiseTransactions(userId, pairwiseCounts);
+
+  const partnerIds = [
+    ...new Set(
+      transactions
+        .filter((tx) => tx.buyerId === userId || tx.sellerId === userId)
+        .map((tx) => (tx.buyerId === userId ? tx.sellerId : tx.buyerId))
+    ),
+  ];
+
+  const hasSharedFingerprint = detectSharedFingerprints(
+    userId, fingerprints, partnerIds
+  );
+
+  let penalty = 0;
+  if (excessTxs > 0) penalty += excessTxs * 2;
+  if (hasSharedFingerprint) penalty += 10;
+
+  return { penalty, isSybil: hasSharedFingerprint || excessTxs > 10 };
+}
