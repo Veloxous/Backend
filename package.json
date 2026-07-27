@@ -28,10 +28,10 @@
     "@types/jest": "^30.0.0",
     "@types/node": "^20.12.11",
     "@types/pg": "^8.20.0",
-    "eslint": "^9.0.0",
-    "jest": "^30.4.2",
+    "eslint": "^10.8.0",
+    "jest": "^19.0.2",
     "prettier": "^3.2.5",
-    "ts-jest": "^29.4.12",
+    "ts-jest": "^27.0.3",
     "ts-node": "^10.9.2",
     "typescript": "^5.4.5"
   }
