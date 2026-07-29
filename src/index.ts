@@ -12,8 +12,11 @@ const PORT = process.env.PORT || 8080;
 app.use(helmet());
 app.use(cors({ origin: process.env.FRONTEND_URL || "*" }));
 app.use(express.json());
+import authRouter from "./routes/auth.routes";
 
 // Request logger middleware
+app.use("/auth", authRouter);
+
 app.use((req, res, next) => {
   console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
   next();
