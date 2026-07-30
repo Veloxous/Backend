@@ -24,3 +24,13 @@ export async function withTransaction<T>(
     client.release();
   }
 }
+
+export async function initDb() {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS auth_challenges (
+        hash VARCHAR(64) PRIMARY KEY,
+        expires_at TIMESTAMP NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_auth_challenges_expires_at ON auth_challenges(expires_at);
+  `);
+}

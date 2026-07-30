@@ -12,8 +12,12 @@ const PORT = process.env.PORT || 8080;
 app.use(helmet());
 app.use(cors({ origin: process.env.FRONTEND_URL || "*" }));
 app.use(express.json());
+import authRouter from "./routes/auth.routes";
+import { initDb } from "./db/db";
 
 // Request logger middleware
+app.use("/auth", authRouter);
+
 app.use((req, res, next) => {
   console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
   next();
@@ -37,14 +41,19 @@ app.use((err: any, req: express.Request, res: express.Response, next: express.Ne
   res.status(500).json({ error: "Internal Server Error" });
 });
 
-app.listen(PORT, () => {
-  console.log(`Veloxous backend listening on port ${PORT}`);
-  
-  // Start Soroban Events Worker
-  if (process.env.NODE_ENV !== 'test') {
-    const worker = new SorobanEventsWorker();
-    worker.start().catch(err => {
-      console.error("Failed to start Soroban worker:", err);
-    });
-  }
+initDb().then(() => {
+  app.listen(PORT, () => {
+    console.log(`Veloxous backend listening on port ${PORT}`);
+    
+    // Start Soroban Events Worker
+    if (process.env.NODE_ENV !== 'test') {
+      const worker = new SorobanEventsWorker();
+      worker.start().catch(err => {
+        console.error("Failed to start Soroban worker:", err);
+      });
+    }
+  });
+}).catch(err => {
+  console.error("Failed to initialize database:", err);
+  process.exit(1);
 });
