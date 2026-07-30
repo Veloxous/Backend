@@ -18,9 +18,18 @@ import { pool } from "../db/db";
 
 // Simple in-memory rate limiter for GET /auth per IP
 const getChallengeLimiter = new Map<string, { count: number, resetAt: number }>();
+function pruneExpired(map: Map<string, { count: number; resetAt: number }>) {
+  const now = Date.now();
+  for (const [key, rec] of map) {
+    if (rec.resetAt <= now) map.delete(key);
+  }
+}
+
 // Periodic cleanup of expired challenges
 const cleanupTimer = setInterval(() => {
     pool.query("DELETE FROM auth_challenges WHERE expires_at <= NOW()").catch(console.error);
+    pruneExpired(getChallengeLimiter);
+    pruneExpired(failedAuthLimiter);
 }, 60000); // 1 minute
 if (cleanupTimer.unref) cleanupTimer.unref();
 
@@ -92,10 +101,39 @@ function handleAuthFailure(res: any, ip: string, status: number, reason: string)
     return res.status(status).json({ error: reason });
 }
 
+export const _testClearLimiters = () => {
+    getChallengeLimiter.clear();
+    failedAuthLimiter.clear();
+};
+
 const HORIZON_URL = process.env.STELLAR_NETWORK === "mainnet" 
     ? "https://horizon.stellar.org" 
     : "https://horizon-testnet.stellar.org";
 const stellarServer = new StellarSdk.Horizon.Server(HORIZON_URL);
+
+// Helper to wrap promise with a timeout and retry
+async function fetchWithTimeoutAndRetry<T>(
+    promiseFn: () => Promise<T>, 
+    timeoutMs: number = 5000, 
+    retries: number = 1
+): Promise<T> {
+    for (let i = 0; i <= retries; i++) {
+        try {
+            return await new Promise<T>((resolve, reject) => {
+                const timer = setTimeout(() => reject(new Error("Timeout")), timeoutMs);
+                promiseFn().then(
+                    (res) => { clearTimeout(timer); resolve(res); },
+                    (err) => { clearTimeout(timer); reject(err); }
+                );
+            });
+        } catch (error: any) {
+            if (i === retries || error instanceof StellarSdk.NotFoundError || (error.response && error.response.status < 500)) {
+                throw error;
+            }
+        }
+    }
+    throw new Error("Unreachable");
+}
 
 // POST /auth
 // Verifies a signed SEP-10 challenge transaction and issues a JWT
@@ -126,15 +164,30 @@ router.post("/", async (req, res) => {
         // Determine the client account ID from the transaction
         const clientAccountId = challengeTx.clientAccountID;
 
-        // Fetch account signer summary from Horizon
-        const accountRecord = await stellarServer.loadAccount(clientAccountId);
+        // Fetch account signer summary from Horizon with bounded timeout and retry
+        let accountRecord: any;
+        try {
+            accountRecord = await fetchWithTimeoutAndRetry(() => stellarServer.loadAccount(clientAccountId));
+        } catch (error: any) {
+            if (error instanceof StellarSdk.NotFoundError) {
+                // Fallback for unfunded or non-existent accounts
+                accountRecord = {
+                    id: clientAccountId,
+                    signers: [{ key: clientAccountId, weight: 1 }],
+                    thresholds: { low_threshold: 1, med_threshold: 1, high_threshold: 1 }
+                };
+            } else {
+                console.error("[POST /auth] Horizon error loading account:", error);
+                return res.status(500).json({ error: "Failed to verify account on Horizon" });
+            }
+        }
 
         // Verify the client's signature
         const signers = StellarSdk.WebAuth.verifyChallengeTxThreshold(
             transaction,
             SERVER_KEYPAIR.publicKey(),
             NETWORK_PASSPHRASE,
-            accountRecord.thresholds.low_threshold, // threshold
+            accountRecord.thresholds.med_threshold, // threshold
             accountRecord.signers, // signerSummary
             HOME_DOMAIN,
             HOME_DOMAIN
@@ -166,7 +219,7 @@ router.post("/", async (req, res) => {
         res.json({ token });
     } catch (error: any) {
         console.error("[POST /auth] Error verifying challenge tx:", error);
-        return handleAuthFailure(res, clientIp, 401, "Authentication failed. " + (error.message || ""));
+        return handleAuthFailure(res, clientIp, 401, "Authentication failed.");
     }
 });
 
