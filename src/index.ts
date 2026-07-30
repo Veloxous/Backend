@@ -3,6 +3,8 @@ import cors from "cors";
 import helmet from "helmet";
 import dotenv from "dotenv";
 import { SorobanEventsWorker } from "./workers/soroban-events.worker";
+import { SwapTimeoutWorker } from "./workers/swap-timeout.worker";
+import swapsRouter from "./routes/swaps";
 
 dotenv.config();
 
@@ -27,6 +29,9 @@ app.get("/health", (_req, res) => {
   res.json({ status: "ok", service: "veloxous-backend", uptime: process.uptime() });
 });
 
+// Swap routes
+app.use("/swaps", swapsRouter);
+
 // Example webhook endpoint for Supabase / Soroban events
 app.post("/webhooks/escrow", (req, res) => {
   const event = req.body;
@@ -41,19 +46,21 @@ app.use((err: any, req: express.Request, res: express.Response, next: express.Ne
   res.status(500).json({ error: "Internal Server Error" });
 });
 
-initDb().then(() => {
-  app.listen(PORT, () => {
-    console.log(`Veloxous backend listening on port ${PORT}`);
-    
+app.listen(PORT, () => {
+  console.log(`Veloxous backend listening on port ${PORT}`);
+  
+  // Start background workers if not in test environment
+  if (process.env.NODE_ENV !== 'test') {
     // Start Soroban Events Worker
-    if (process.env.NODE_ENV !== 'test') {
-      const worker = new SorobanEventsWorker();
-      worker.start().catch(err => {
-        console.error("Failed to start Soroban worker:", err);
-      });
-    }
-  });
-}).catch(err => {
-  console.error("Failed to initialize database:", err);
-  process.exit(1);
+    const sorobanWorker = new SorobanEventsWorker();
+    sorobanWorker.start().catch(err => {
+      console.error("Failed to start Soroban worker:", err);
+    });
+
+    // Start Swap Timeout Worker
+    const swapWorker = new SwapTimeoutWorker();
+    swapWorker.start().catch(err => {
+      console.error("Failed to start swap timeout worker:", err);
+    });
+  }
 });
