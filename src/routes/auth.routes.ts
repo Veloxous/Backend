@@ -14,9 +14,19 @@ const NETWORK_PASSPHRASE = process.env.STELLAR_NETWORK === "mainnet"
     ? StellarSdk.Networks.PUBLIC 
     : StellarSdk.Networks.TESTNET;
 
+import { pool } from "../db/db";
+
+// Ensure table exists
+pool.query(`
+    CREATE TABLE IF NOT EXISTS auth_challenges (
+        hash VARCHAR(64) PRIMARY KEY,
+        expires_at TIMESTAMP NOT NULL
+    )
+`).catch(console.error);
+
 // GET /auth
 // Generates a SEP-10 challenge transaction
-router.get("/", (req, res) => {
+router.get("/", async (req, res) => {
     try {
         const account = req.query.account as string;
         
@@ -39,6 +49,14 @@ router.get("/", (req, res) => {
             HOME_DOMAIN
         );
 
+        const tx = new StellarSdk.Transaction(challenge, NETWORK_PASSPHRASE);
+        const txHash = tx.hash().toString("hex");
+
+        await pool.query(
+            "INSERT INTO auth_challenges (hash, expires_at) VALUES ($1, NOW() + INTERVAL '15 minutes')",
+            [txHash]
+        );
+
         res.json({ transaction: challenge });
     } catch (error: any) {
         console.error("[GET /auth] Error building challenge tx:", error);
@@ -48,7 +66,7 @@ router.get("/", (req, res) => {
 
 // POST /auth
 // Verifies a signed SEP-10 challenge transaction and issues a JWT
-router.post("/", (req, res) => {
+router.post("/", async (req, res) => {
     try {
         const { transaction } = req.body;
 
@@ -63,7 +81,7 @@ router.post("/", (req, res) => {
             NETWORK_PASSPHRASE,
             HOME_DOMAIN,
             HOME_DOMAIN
-        );
+        ) as StellarSdk.Transaction;
 
         // Determine the client account ID from the transaction
         const clientAccountId = challengeTx.clientAccountID;
@@ -80,6 +98,18 @@ router.post("/", (req, res) => {
 
         if (!signers.includes(clientAccountId)) {
             return res.status(401).json({ error: "Invalid transaction signature" });
+        }
+
+        const txHash = challengeTx.hash().toString("hex");
+
+        // Atomically consume it
+        const consumeResult = await pool.query(
+            "DELETE FROM auth_challenges WHERE hash = $1 AND expires_at > NOW() RETURNING *",
+            [txHash]
+        );
+
+        if (consumeResult.rowCount === 0) {
+            return res.status(401).json({ error: "Challenge expired, invalid, or already consumed" });
         }
 
         // Generate JWT
