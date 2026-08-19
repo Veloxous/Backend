@@ -5,6 +5,7 @@ import dotenv from "dotenv";
 import { SorobanEventsWorker } from "./workers/soroban-events.worker";
 import { SwapTimeoutWorker } from "./workers/swap-timeout.worker";
 import swapsRouter from "./routes/swaps";
+import repairRouter from "./routes/repair.routes";
 
 dotenv.config();
 
@@ -31,6 +32,9 @@ app.get("/health", (_req, res) => {
 
 // Swap routes
 app.use("/swaps", swapsRouter);
+
+// Repair routes
+app.use("/repair", repairRouter);
 
 // Example webhook endpoint for Supabase / Soroban events
 app.post("/webhooks/escrow", (req, res) => {
