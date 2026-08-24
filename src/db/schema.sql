@@ -67,3 +67,29 @@ CREATE TABLE IF NOT EXISTS repair_milestones (
 
 CREATE INDEX IF NOT EXISTS idx_repair_milestones_repair_id ON repair_milestones(repair_id);
 CREATE INDEX IF NOT EXISTS idx_repair_milestones_status ON repair_milestones(status);
+
+-- Device Listings Table
+CREATE TABLE IF NOT EXISTS listings (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    owner_id VARCHAR(64) NOT NULL,
+    title VARCHAR(255),
+    description TEXT,
+    category VARCHAR(50) NOT NULL,
+    condition VARCHAR(50) NOT NULL,
+    price NUMERIC(12, 2) NOT NULL,
+    image_urls TEXT[] NOT NULL DEFAULT '{}',
+    device_type VARCHAR(100),
+    estimated_value NUMERIC(12, 2),
+    trust_score NUMERIC(5, 2) DEFAULT 100.0,
+    is_locked BOOLEAN DEFAULT FALSE,
+    current_swap_id UUID,
+    owner_email VARCHAR(255),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    deleted_at TIMESTAMP WITH TIME ZONE DEFAULT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_listings_owner_id ON listings(owner_id);
+CREATE INDEX IF NOT EXISTS idx_listings_category ON listings(category);
+CREATE INDEX IF NOT EXISTS idx_listings_deleted_at ON listings(deleted_at);
+
