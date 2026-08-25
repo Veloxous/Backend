@@ -6,6 +6,7 @@ import { SorobanEventsWorker } from "./workers/soroban-events.worker";
 import { SwapTimeoutWorker } from "./workers/swap-timeout.worker";
 import swapsRouter from "./routes/swaps";
 import repairRouter from "./routes/repair.routes";
+import listingsRouter from "./routes/listings.routes";
 
 dotenv.config();
 
@@ -36,6 +37,9 @@ app.use("/swaps", swapsRouter);
 // Repair routes
 app.use("/repair", repairRouter);
 
+// Listings routes
+app.use("/listings", listingsRouter);
+
 // Image upload routes
 import uploadsRouter from "./routes/uploads.routes";
 app.use("/uploads", uploadsRouter);
@@ -54,9 +58,16 @@ app.use((err: any, req: express.Request, res: express.Response, next: express.Ne
   res.status(500).json({ error: "Internal Server Error" });
 });
 
-app.listen(PORT, () => {
+app.listen(PORT, async () => {
   console.log(`Veloxous backend listening on port ${PORT}`);
-  
+
+  try {
+    await initDb();
+    console.log("Database initialized successfully.");
+  } catch (error) {
+    console.error("Database initialization failed:", error);
+  }
+
   // Start background workers if not in test environment
   if (process.env.NODE_ENV !== 'test') {
     // Start Soroban Events Worker
