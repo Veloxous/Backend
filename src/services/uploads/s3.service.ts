@@ -1,5 +1,6 @@
-import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
+import { S3Client } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
+import { createPresignedPost } from "@aws-sdk/s3-presigned-post";
 import crypto from "crypto";
 
 const ALLOWED_CONTENT_TYPES = ["image/jpeg", "image/png", "image/webp"] as const;
@@ -10,6 +11,8 @@ const EXTENSION_BY_TYPE: Record<AllowedContentType, string> = {
     "image/png": "png",
     "image/webp": "webp",
 };
+
+const MAX_PRESIGN_EXPIRY_SECONDS = 300;
 
 export class S3Service {
     private client: S3Client;
@@ -22,16 +25,27 @@ export class S3Service {
         this.region = process.env.S3_REGION || "us-east-1";
         this.bucket = process.env.S3_BUCKET || "";
         this.cdnBaseUrl = process.env.CDN_BASE_URL || "";
-        this.expirySeconds = parseInt(process.env.PRESIGN_EXPIRY_SECONDS || "300", 10);
 
+        // The issue caps presigned URLs at 5 minutes; clamp misconfigurations
+        // into that window instead of silently issuing longer-lived URLs.
+        const configured = parseInt(process.env.PRESIGN_EXPIRY_SECONDS || "300", 10);
+        if (Number.isNaN(configured) || configured < 1) {
+            this.expirySeconds = 300;
+        } else {
+            this.expirySeconds = Math.min(configured, MAX_PRESIGN_EXPIRY_SECONDS);
+        }
+
+        // Only pin static credentials when both are provided; otherwise let
+        // the SDK's default provider chain (IAM roles, env, etc.) take over.
+        const accessKeyId = process.env.AWS_ACCESS_KEY_ID;
+        const secretAccessKey = process.env.AWS_SECRET_ACCESS_KEY;
         this.client =
             client ??
             new S3Client({
                 region: this.region,
-                credentials: {
-                    accessKeyId: process.env.AWS_ACCESS_KEY_ID || "",
-                    secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY || "",
-                },
+                ...(accessKeyId && secretAccessKey
+                    ? { credentials: { accessKeyId, secretAccessKey } }
+                    : {}),
             });
     }
 
@@ -40,28 +54,34 @@ export class S3Service {
     }
 
     /**
-     * Generates a short-lived presigned PUT URL for a direct-to-S3 upload.
+     * Generates a short-lived presigned POST for a direct-to-S3 upload. Unlike
+     * a bare presigned PUT, the policy enforces the content type and a
+     * content-length-range server-side, so an omitted or lying size hint can't
+     * bypass the upload cap.
+     *
      * Object keys are namespaced by the uploader's user ID so one user can
      * never write into another user's path.
      */
     public async getPresignedUploadUrl(
         userId: string,
-        contentType: AllowedContentType
-    ): Promise<{ uploadUrl: string; key: string; cdnUrl: string; expiresIn: number }> {
+        contentType: AllowedContentType,
+        maxSizeBytes: number
+    ): Promise<{ url: string; fields: Record<string, string>; key: string; cdnUrl: string; expiresIn: number }> {
         const key = `uploads/${userId}/${crypto.randomUUID()}.${EXTENSION_BY_TYPE[contentType]}`;
 
-        const command = new PutObjectCommand({
+        const { url, fields } = await createPresignedPost(this.client, {
             Bucket: this.bucket,
             Key: key,
-            ContentType: contentType,
-        });
-
-        const uploadUrl = await getSignedUrl(this.client, command, {
-            expiresIn: this.expirySeconds,
+            Conditions: [
+                { "Content-Type": contentType },
+                ["content-length-range", 1, maxSizeBytes],
+            ],
+            Expires: this.expirySeconds,
         });
 
         return {
-            uploadUrl,
+            url,
+            fields,
             key,
             cdnUrl: this.publicUrlFor(key),
             expiresIn: this.expirySeconds,
@@ -69,13 +89,20 @@ export class S3Service {
     }
 
     /**
-     * Confirms an image URL saved on a listing actually points inside the
-     * uploading user's namespace, blocking cross-user path traversal like
-     * `uploads/other-user/...` or `uploads/{id}/../escape.jpg`.
+     * Confirms an image URL saved on a listing actually points at our storage
+     * AND sits inside the uploading user's namespace — rejecting other users'
+     * paths, foreign hosts, and traversal like `uploads/{id}/../escape.jpg`.
      */
     public validateImageOwnership(userId: string, imageUrl: string): boolean {
         try {
             const parsed = new URL(imageUrl);
+
+            // Only accept URLs served from our own public endpoints.
+            const trustedOrigins = [this.publicOrigin()];
+            if (!trustedOrigins.includes(parsed.origin)) {
+                return false;
+            }
+
             const prefix = `uploads/${userId}/`;
             const pathname = decodeURIComponent(parsed.pathname).replace(/^\/+/, "");
 
@@ -89,6 +116,18 @@ export class S3Service {
         } catch {
             return false;
         }
+    }
+
+    /** Origin of the public URL users will fetch uploaded images from. */
+    private publicOrigin(): string {
+        if (this.cdnBaseUrl) {
+            try {
+                return new URL(this.cdnBaseUrl).origin;
+            } catch {
+                // fall through to bucket URL
+            }
+        }
+        return new URL(`https://${this.bucket}.s3.${this.region}.amazonaws.com`).origin;
     }
 
     public publicUrlFor(key: string): string {
