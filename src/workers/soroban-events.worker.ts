@@ -1,21 +1,26 @@
 import { SorobanService } from "../services/stellar/soroban.service";
 import { pool, withTransaction } from "../db/db";
-import { rpc, xdr } from "@stellar/stellar-sdk";
+import { rpc, xdr, StrKey } from "@stellar/stellar-sdk";
 
 const LAG_THRESHOLD = 100;
 const FINALITY_BUFFER = 2; // Process up to (latest - 2)
 const POLL_INTERVAL = 3000;
-const CONTRACT_ID = process.env.ESCROW_CONTRACT_ID || "C_MOCK_CONTRACT_ID";
 
 export class SorobanEventsWorker {
   private service: SorobanService;
   private isRunning: boolean = false;
   private timeoutId: NodeJS.Timeout | null = null;
   private webhookUrl: string | undefined;
+  // Events from either contract drive escrow state, so both are watched.
+  private contractIds: string[];
 
   constructor() {
     this.service = new SorobanService();
     this.webhookUrl = process.env.ALERT_WEBHOOK_URL;
+    this.contractIds = [
+      process.env.ESCROW_CONTRACT_ID || "C_MOCK_CONTRACT_ID",
+      process.env.SWAP_CONTRACT_ID || "",
+    ].filter((id) => id.length > 0);
   }
 
   public async start() {
@@ -75,72 +80,156 @@ export class SorobanEventsWorker {
       [xdr.ScVal.scvSymbol("DisputeRaised").toXDR("base64")]
     ];
 
-    const events = await this.service.getEvents(startLedger, endLedger, [CONTRACT_ID], topics);
+    const events = await this.service.getEvents(startLedger, endLedger, this.contractIds, topics);
 
     for (const event of events) {
+      // A database failure must abort the batch before the cursor advances,
+      // so the same events are reprocessed on the next tick. Only parse
+      // failures are contained (they go to the DLQ).
       await this.processEventWithDLQ(event);
     }
 
-    // Update cursor
+    // Update cursor — only reached when every event either committed or was
+    // safely parked in the DLQ.
     await this.updateLastProcessedLedger(endLedger);
   }
 
   private async processEventWithDLQ(event: rpc.Api.EventResponse) {
+    let parsedData: { transaction_id: string; event_type: string; amount: string; party: string };
     try {
-      // 1. Parse Event
-      const parsedData = this.parseEventPayload(event);
-
-      // 2. Transactional processing
-      await withTransaction(async (client) => {
-        // Idempotent insert: if transaction_id exists, ignore
-        await client.query(
-          `INSERT INTO escrow_transactions (transaction_id, event_type, amount, party) 
-           VALUES ($1, $2, $3, $4)
-           ON CONFLICT (transaction_id) DO NOTHING`,
-          [parsedData.transaction_id, parsedData.event_type, parsedData.amount, parsedData.party]
-        );
-      });
-      console.log(`[SorobanEventsWorker] Successfully processed event TX: ${parsedData.transaction_id}`);
+      // 1. Parse Event — undecodable payloads go to the DLQ for manual replay.
+      parsedData = this.parseEventPayload(event);
     } catch (error: any) {
-      console.error(`[SorobanEventsWorker] Failed to process event ${event.id}, moving to DLQ:`, error.message);
-      try {
-        await pool.query(
-          `INSERT INTO failed_events (transaction_id, raw_xdr, error_message) VALUES ($1, $2, $3)`,
-          [event.txHash, JSON.stringify(event), error.message]
-        );
-      } catch (dlqError) {
-        console.error(`[SorobanEventsWorker] CRITICAL: Failed to write to DLQ!`, dlqError);
-        // We still don't halt the worker, but we log the critical failure.
-      }
+      console.error(`[SorobanEventsWorker] Failed to parse event ${event.id}, moving to DLQ:`, error.message);
+      await this.writeToDlq(event.txHash ?? event.id ?? "unknown", JSON.stringify(event), error.message);
+      return;
     }
+
+    // 2. Transactional processing. A database failure here propagates up so
+    // processNextBatch skips the cursor update — this event is reprocessed
+    // once the database is healthy again. It deliberately does NOT go to the
+    // DLQ, which would stop it from being retried.
+    await withTransaction(async (client) => {
+      // Idempotent insert: if transaction_id exists, ignore
+      await client.query(
+        `INSERT INTO escrow_transactions (transaction_id, event_type, amount, party) 
+         VALUES ($1, $2, $3, $4)
+         ON CONFLICT (transaction_id) DO NOTHING`,
+        [parsedData.transaction_id, parsedData.event_type, parsedData.amount, parsedData.party]
+      );
+    });
+    console.log(`[SorobanEventsWorker] Successfully processed event TX: ${parsedData.transaction_id}`);
+  }
+
+  private async writeToDlq(transactionId: string, rawXdr: string, errorMessage: string): Promise<void> {
+    await pool.query(`INSERT INTO failed_events (transaction_id, raw_xdr, error_message) VALUES ($1, $2, $3)`, [
+      transactionId,
+      rawXdr,
+      errorMessage,
+    ]);
   }
 
   private parseEventPayload(event: rpc.Api.EventResponse) {
-    // Assuming the event payload is an XDR ScVal string in base64
-    // Since we don't have the exact ABI, this is a simulated parsing
-    // In a real application, you'd use xdr.ScVal.fromXDR(event.value.xdr, 'base64') and extract fields
-    
-    // Simulate extraction for the task
     const parsed = {
       transaction_id: event.txHash,
       event_type: "Unknown",
       amount: "0",
-      party: "Unknown"
+      party: "Unknown",
     };
-    
-    // We try to interpret the topic[0] to determine event type
-    if (event.topic && event.topic.length > 0) {
-       try {
-           const topicVal = xdr.ScVal.fromXDR(event.topic[0] as unknown as string, "base64");
-           if (topicVal.switch() === xdr.ScValType.scvSymbol()) {
-               parsed.event_type = topicVal.sym().toString();
-           }
-       } catch (e) {
-           // fallback
-       }
+
+    // Collect every ScVal we can find: topics first (contract events put the
+    // variant name there), then the event's data value.
+    const scvals: xdr.ScVal[] = [];
+    for (const topic of event.topic ?? []) {
+      try {
+        scvals.push(
+          typeof topic === "string"
+            ? xdr.ScVal.fromXDR(topic, "base64")
+            : (topic as unknown as xdr.ScVal)
+        );
+      } catch {
+        // Non-ScVal topic entries are ignored.
+      }
+    }
+
+    const value: any = event.value;
+    if (value) {
+      // Depending on SDK version the value arrives pre-decoded or raw.
+      if (typeof value.toXDR === "function") {
+        scvals.push(value);
+      } else if (value.xdr) {
+        try {
+          scvals.push(xdr.ScVal.fromXDR(value.xdr, "base64"));
+        } catch {
+          throw new Error("Event value is not decodable XDR");
+        }
+      }
+    }
+
+    for (const val of scvals) {
+      switch (val.switch()) {
+        case xdr.ScValType.scvSymbol(): {
+          if (parsed.event_type === "Unknown") {
+            parsed.event_type = val.sym().toString();
+          }
+          break;
+        }
+        case xdr.ScValType.scvAddress(): {
+          if (parsed.party === "Unknown") {
+            const addr = val.address();
+            if (addr.switch().name === "scAddressTypeAccount") {
+              parsed.party = addr.accountId().toString();
+            } else {
+              parsed.party = StrKey.encodeContract(addr.contractId());
+            }
+          }
+          break;
+        }
+        case xdr.ScValType.scvU64():
+        case xdr.ScValType.scvI64(): {
+          if (parsed.amount === "0") {
+            parsed.amount = val.u64().toString();
+          }
+          break;
+        }
+        case xdr.ScValType.scvU128(): {
+          if (parsed.amount === "0") {
+            const parts = val.u128();
+            parsed.amount = this.u128ToAmount(parts);
+          }
+          break;
+        }
+        case xdr.ScValType.scvI128(): {
+          if (parsed.amount === "0") {
+            parsed.amount = this.i128ToAmount(val.i128());
+          }
+          break;
+        }
+        default:
+          break;
+      }
     }
 
     return parsed;
+  }
+
+  /** Converts an Int128Parts (hi/lo) pair to a decimal string. */
+  private u128ToAmount(parts: { hi(): any; lo(): any }): string {
+    const hi = BigInt(parts.hi().toString());
+    const lo = BigInt(parts.lo().toString());
+    return (hi * BigInt(2) ** BigInt(64) + lo).toString();
+  }
+
+  private i128ToAmount(parts: { hi(): any; lo(): any }): string {
+    const hi = BigInt(parts.hi().toString());
+    if (hi < BigInt(0)) {
+      // Two's complement: reinterpret hi as unsigned (hi + 2^64), then
+      // subtract 2^128 from the combined value.
+      const lo = BigInt(parts.lo().toString());
+      const unsigned = (hi + BigInt(2) ** BigInt(64)) * BigInt(2) ** BigInt(64) + lo;
+      return (unsigned - BigInt(2) ** BigInt(128)).toString();
+    }
+    return this.u128ToAmount(parts);
   }
 
   private async getLastProcessedLedger(): Promise<number> {
