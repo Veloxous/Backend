@@ -1,6 +1,6 @@
 import { SorobanService } from "../services/stellar/soroban.service";
 import { pool, withTransaction } from "../db/db";
-import { rpc, xdr, StrKey } from "@stellar/stellar-sdk";
+import { rpc, xdr, Address } from "@stellar/stellar-sdk";
 
 const LAG_THRESHOLD = 100;
 const FINALITY_BUFFER = 2; // Process up to (latest - 2)
@@ -17,10 +17,15 @@ export class SorobanEventsWorker {
   constructor() {
     this.service = new SorobanService();
     this.webhookUrl = process.env.ALERT_WEBHOOK_URL;
-    this.contractIds = [
-      process.env.ESCROW_CONTRACT_ID || "C_MOCK_CONTRACT_ID",
-      process.env.SWAP_CONTRACT_ID || "",
-    ].filter((id) => id.length > 0);
+    // Without an escrow contract to watch the worker would silently index
+    // nothing — fail fast instead.
+    const escrowContractId = process.env.ESCROW_CONTRACT_ID;
+    if (!escrowContractId) {
+      throw new Error("ESCROW_CONTRACT_ID must be configured for the Soroban events worker");
+    }
+    this.contractIds = [escrowContractId, process.env.SWAP_CONTRACT_ID || ""].filter(
+      (id) => id.length > 0
+    );
   }
 
   public async start() {
@@ -74,10 +79,13 @@ export class SorobanEventsWorker {
 
     console.log(`[SorobanEventsWorker] Fetching events from ${startLedger} to ${endLedger}...`);
 
+    // Each filter topic must match the event's full topic list, so pad every
+    // pattern with wildcards ("*") up to the max observed arity — otherwise
+    // multi-topic events would never match a single-segment pattern.
     const topics = [
-      [xdr.ScVal.scvSymbol("EscrowFunded").toXDR("base64")],
-      [xdr.ScVal.scvSymbol("EscrowReleased").toXDR("base64")],
-      [xdr.ScVal.scvSymbol("DisputeRaised").toXDR("base64")]
+      [xdr.ScVal.scvSymbol("EscrowFunded").toXDR("base64"), "*", "*"],
+      [xdr.ScVal.scvSymbol("EscrowReleased").toXDR("base64"), "*", "*"],
+      [xdr.ScVal.scvSymbol("DisputeRaised").toXDR("base64"), "*", "*"],
     ];
 
     const events = await this.service.getEvents(startLedger, endLedger, this.contractIds, topics);
@@ -101,7 +109,7 @@ export class SorobanEventsWorker {
       parsedData = this.parseEventPayload(event);
     } catch (error: any) {
       console.error(`[SorobanEventsWorker] Failed to parse event ${event.id}, moving to DLQ:`, error.message);
-      await this.writeToDlq(event.txHash ?? event.id ?? "unknown", JSON.stringify(event), error.message);
+      await this.writeToDlq(event.txHash || event.id || "unknown", JSON.stringify(event), error.message);
       return;
     }
 
@@ -131,7 +139,7 @@ export class SorobanEventsWorker {
 
   private parseEventPayload(event: rpc.Api.EventResponse) {
     const parsed = {
-      transaction_id: event.txHash,
+      transaction_id: event.txHash || event.id,
       event_type: "Unknown",
       amount: "0",
       party: "Unknown",
@@ -176,19 +184,21 @@ export class SorobanEventsWorker {
         }
         case xdr.ScValType.scvAddress(): {
           if (parsed.party === "Unknown") {
-            const addr = val.address();
-            if (addr.switch().name === "scAddressTypeAccount") {
-              parsed.party = addr.accountId().toString();
-            } else {
-              parsed.party = StrKey.encodeContract(addr.contractId());
-            }
+            // The SDK's Address abstraction handles both account (G...) and
+            // contract (C...) ScAddresses and produces a valid StrKey string.
+            parsed.party = Address.fromScAddress(val.address()).toString();
           }
           break;
         }
-        case xdr.ScValType.scvU64():
-        case xdr.ScValType.scvI64(): {
+        case xdr.ScValType.scvU64(): {
           if (parsed.amount === "0") {
             parsed.amount = val.u64().toString();
+          }
+          break;
+        }
+        case xdr.ScValType.scvI64(): {
+          if (parsed.amount === "0") {
+            parsed.amount = val.i64().toString();
           }
           break;
         }
@@ -208,6 +218,13 @@ export class SorobanEventsWorker {
         default:
           break;
       }
+    }
+
+    if (!event.txHash && !event.id) {
+      throw new Error("Event has neither txHash nor id — cannot be tracked");
+    }
+    if (parsed.event_type === "Unknown") {
+      throw new Error("Event topic does not resolve to a known escrow event type");
     }
 
     return parsed;

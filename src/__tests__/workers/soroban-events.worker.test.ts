@@ -1,7 +1,7 @@
 import { SorobanEventsWorker } from "../../workers/soroban-events.worker";
 import { SorobanService } from "../../services/stellar/soroban.service";
 import { pool, withTransaction } from "../../db/db";
-import { xdr, StrKey } from "@stellar/stellar-sdk";
+import { xdr, StrKey, Address } from "@stellar/stellar-sdk";
 
 jest.mock("../../services/stellar/soroban.service");
 jest.mock("../../db/db", () => ({
@@ -25,12 +25,32 @@ function i128ScVal(value: bigint): string {
   ).toXDR("base64");
 }
 
+function u64ScVal(value: bigint): string {
+  return xdr.ScVal.scvU64(xdr.Uint64.fromString(value.toString())).toXDR("base64");
+}
+
+function i64ScVal(value: bigint): string {
+  return xdr.ScVal.scvI64(xdr.Int64.fromString(value.toString())).toXDR("base64");
+}
+
 function contractAddressScVal(): { scVal: string; strKey: string } {
   const bytes = Buffer.alloc(32, 7);
   const strKey = StrKey.encodeContract(bytes);
   return {
     scVal: xdr.ScVal.scvAddress(xdr.ScAddress.scAddressTypeContract(bytes)).toXDR("base64"),
     strKey,
+  };
+}
+
+function accountAddressScVal(): { scVal: string; publicKey: string } {
+  const kp = (globalThis as any).__testKeypair ?? ((globalThis as any).__testKeypair = require("@stellar/stellar-sdk").Keypair.random());
+  // These union constructors exist at runtime but aren't in the SDK's type defs.
+  const xdrAny = xdr as any;
+  const switchOn = xdrAny.PublicKeyType.publicKeyTypeEd25519();
+  const acc = new xdrAny.AccountId(switchOn, kp.rawPublicKey());
+  return {
+    scVal: xdr.ScVal.scvAddress(xdr.ScAddress.scAddressTypeAccount(acc)).toXDR("base64"),
+    publicKey: kp.publicKey(),
   };
 }
 
@@ -50,10 +70,19 @@ describe("SorobanEventsWorker", () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    process.env.ESCROW_CONTRACT_ID = "C_MOCK_CONTRACT_ID";
     process.env.SWAP_CONTRACT_ID = "C_SWAP_CONTRACT";
     mockSorobanService = new SorobanService() as jest.Mocked<SorobanService>;
     worker = new SorobanEventsWorker();
     (worker as any).service = mockSorobanService;
+  });
+
+  describe("constructor", () => {
+    it("throws a clear configuration error when ESCROW_CONTRACT_ID is missing", () => {
+      delete process.env.ESCROW_CONTRACT_ID;
+
+      expect(() => new SorobanEventsWorker()).toThrow("ESCROW_CONTRACT_ID must be configured");
+    });
   });
 
   describe("parseEventPayload (Unit)", () => {
@@ -73,6 +102,31 @@ describe("SorobanEventsWorker", () => {
       expect(parsed.party).toBe(addr.strKey);
     });
 
+    it("extracts account addresses via the SDK Address abstraction", () => {
+      const acct = accountAddressScVal();
+      const event = makeEvent({
+        txHash: "acct_tx",
+        topic: [symbolTopic("EscrowReleased"), acct.scVal],
+      });
+
+      const parsed = (worker as any).parseEventPayload(event);
+
+      expect(parsed.party).toBe(acct.publicKey);
+      // A valid Stellar StrKey address
+      expect(StrKey.isValidEd25519PublicKey(parsed.party)).toBe(true);
+    });
+
+    it.each([
+      ["u64", u64ScVal(BigInt(250)), "250"],
+      ["i64", i64ScVal(BigInt(-75)), "-75"],
+    ])("parses %s amounts as signed/unsigned respectively", (_kind, scVal, expected) => {
+      const parsed = (worker as any).parseEventPayload(
+        makeEvent({ txHash: "amt_tx", value: { xdr: scVal } })
+      );
+
+      expect(parsed.amount).toBe(expected);
+    });
+
     it("parses EscrowReleased and DisputeRaised variants", () => {
       const released = (worker as any).parseEventPayload(makeEvent({ topic: [symbolTopic("EscrowReleased")] }));
       expect(released.event_type).toBe("EscrowReleased");
@@ -81,25 +135,35 @@ describe("SorobanEventsWorker", () => {
       expect(dispute.event_type).toBe("DisputeRaised");
     });
 
+    it("throws so the event is DLQ'd when no topic resolves the event type", () => {
+      const event = makeEvent({ topic: [] });
+
+      expect(() => (worker as any).parseEventPayload(event)).toThrow(/does not resolve to a known escrow event type/);
+    });
+
+    it("throws so the event is DLQ'd when both txHash and id are absent", () => {
+      const event = makeEvent({ id: undefined, txHash: undefined });
+
+      expect(() => (worker as any).parseEventPayload(event)).toThrow(/neither txHash nor id/);
+    });
+
+    it("falls back to event.id for the transaction id when txHash is missing", () => {
+      const parsed = (worker as any).parseEventPayload(makeEvent({ id: "evt-only", txHash: undefined }));
+
+      expect(parsed.transaction_id).toBe("evt-only");
+    });
+
     it("throws on undecodable event values so the caller routes it to the DLQ", () => {
       const event = makeEvent({ value: { xdr: "!!!not-base64-xdr!!!" } });
 
       expect(() => (worker as any).parseEventPayload(event)).toThrow();
     });
-
-    it("falls back to Unknown fields when only the topic symbol is present", () => {
-      const parsed = (worker as any).parseEventPayload(makeEvent());
-
-      expect(parsed.event_type).toBe("EscrowFunded");
-      expect(parsed.amount).toBe("0");
-      expect(parsed.party).toBe("Unknown");
-    });
   });
 
   describe("Integration Tests", () => {
-    function setupHappyPathDb() {
-      // getLastProcessedLedger
-      (pool.query as jest.Mock).mockImplementation(async (query: string, params?: any[]) => {
+    function setupHappyPathDb(): jest.Mock {
+      const clientQuery = jest.fn().mockResolvedValue({});
+      (pool.query as jest.Mock).mockImplementation(async (query: string) => {
         if (query.includes("SELECT last_processed_ledger")) {
           return { rows: [{ last_processed_ledger: 1000 }] };
         }
@@ -110,12 +174,13 @@ describe("SorobanEventsWorker", () => {
         return { rowCount: 1, rows: [] };
       });
       (withTransaction as jest.Mock).mockImplementation(async (cb) => {
-        await cb({ query: jest.fn().mockResolvedValue({}) });
+        await cb({ query: clientQuery });
       });
+      return clientQuery;
     }
 
     it("processes an event sequence into escrow_transactions and advances the cursor", async () => {
-      setupHappyPathDb();
+      const clientQuery = setupHappyPathDb();
       const addr = contractAddressScVal();
       mockSorobanService.getLatestLedger.mockResolvedValue(1005);
       mockSorobanService.getEvents.mockResolvedValue([
@@ -130,18 +195,28 @@ describe("SorobanEventsWorker", () => {
 
       await (worker as any).processNextBatch();
 
-      // Events fetched with BOTH contract IDs
+      // Events fetched with BOTH contract IDs and wildcard-padded topics
       expect(mockSorobanService.getEvents).toHaveBeenCalledWith(
         1001,
         1003,
         expect.arrayContaining(["C_MOCK_CONTRACT_ID", "C_SWAP_CONTRACT"]),
-        expect.any(Array)
+        [
+          [expect.any(String), "*", "*"],
+          [expect.any(String), "*", "*"],
+          [expect.any(String), "*", "*"],
+        ]
       );
 
-      // Both rows inserted idempotently inside transactions
+      // Both rows inserted idempotently inside transactions — verify contents
       expect(withTransaction).toHaveBeenCalledTimes(2);
-      const insertCalls = (withTransaction as jest.Mock).mock.calls.flatMap(([, ...rest]: any[]) => rest);
-      void insertCalls;
+      expect(clientQuery).toHaveBeenCalledWith(
+        expect.stringContaining("ON CONFLICT (transaction_id) DO NOTHING"),
+        ["tx_1", "EscrowFunded", "250", addr.strKey]
+      );
+      expect(clientQuery).toHaveBeenCalledWith(
+        expect.stringContaining("ON CONFLICT (transaction_id) DO NOTHING"),
+        ["tx_2", "EscrowReleased", "0", "Unknown"]
+      );
 
       // Cursor advanced once to the batch end
       expect(pool.query).toHaveBeenCalledWith(
@@ -186,6 +261,27 @@ describe("SorobanEventsWorker", () => {
       // ...good event still committed via its transaction...
       expect(withTransaction).toHaveBeenCalledTimes(1);
       // ...and the cursor advanced past both.
+      expect(pool.query).toHaveBeenCalledWith(
+        expect.stringContaining("UPDATE indexer_state SET last_processed_ledger = $1"),
+        [1003]
+      );
+    });
+
+    it("DLQs events without a resolvable event type instead of inserting Unknown rows", async () => {
+      setupHappyPathDb();
+      mockSorobanService.getLatestLedger.mockResolvedValue(1005);
+      mockSorobanService.getEvents.mockResolvedValue([
+        makeEvent({ id: "no-type", txHash: "", topic: [] }),
+      ] as any);
+
+      await (worker as any).processNextBatch();
+
+      expect(withTransaction).not.toHaveBeenCalled();
+      expect(pool.query).toHaveBeenCalledWith(
+        expect.stringContaining("INSERT INTO failed_events"),
+        ["no-type", expect.any(String), expect.stringMatching(/does not resolve|neither txHash/)]
+      );
+      // Cursor still advances — the event is safely parked for replay
       expect(pool.query).toHaveBeenCalledWith(
         expect.stringContaining("UPDATE indexer_state SET last_processed_ledger = $1"),
         [1003]
