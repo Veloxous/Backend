@@ -39,16 +39,13 @@ describe("Swap Negotiation Flow Integration Tests", () => {
     app.use("/swaps", swapsRouter);
 
     // Mock services
-    mockValuationService = new ValuationService() as jest.Mocked<ValuationService>;
-    mockSorobanService = new SorobanTransactionService() as jest.Mocked<SorobanTransactionService>;
+    mockValuationService = ValuationService.prototype as jest.Mocked<ValuationService>;
+    mockSorobanService = SorobanTransactionService.prototype as jest.Mocked<SorobanTransactionService>;
     mockSwapTimeoutWorker = SwapTimeoutWorker as jest.Mocked<typeof SwapTimeoutWorker>;
 
     // Mock withTransaction to execute callback directly
     (withTransaction as jest.Mock).mockImplementation(async (callback) => {
-      const mockClient = {
-        query: jest.fn(),
-      };
-      return await callback(mockClient as any);
+      return await callback(pool as any);
     });
   });
 
@@ -109,9 +106,19 @@ describe("Swap Negotiation Flow Integration Tests", () => {
           },
         ],
       });
+      // Mock the UPDATE query
+      (pool.query as jest.Mock).mockResolvedValueOnce({
+        rows: [
+          {
+            id: mockSwapId,
+            state: "countered",
+            counter_offer_details: { message: "Can we adjust the terms?", new_terms: { condition: "excellent" } },
+          },
+        ],
+      });
 
       const counterResponse = await request(app)
-        .post(`/swaps/${mockSwapId}/counter`)
+        .patch(`/swaps/${mockSwapId}/counter`)
         .set("x-user-id", mockUserB)
         .send({ message: "Can we adjust the terms?", new_terms: { condition: "excellent" } });
 
@@ -173,7 +180,7 @@ describe("Swap Negotiation Flow Integration Tests", () => {
       mockSwapTimeoutWorker.scheduleSwapMonitoring.mockResolvedValue(undefined);
 
       const acceptResponse = await request(app)
-        .post(`/swaps/${mockSwapId}/accept`)
+        .patch(`/swaps/${mockSwapId}/accept`)
         .set("x-user-id", mockUserA);
 
       expect(acceptResponse.status).toBe(200);
@@ -227,7 +234,7 @@ describe("Swap Negotiation Flow Integration Tests", () => {
       mockSwapTimeoutWorker.scheduleSwapMonitoring.mockResolvedValue(undefined);
 
       const acceptResponse = await request(app)
-        .post(`/swaps/${mockSwapId}/accept`)
+        .patch(`/swaps/${mockSwapId}/accept`)
         .set("x-user-id", mockUserB);
 
       expect(acceptResponse.status).toBe(200);
@@ -240,11 +247,11 @@ describe("Swap Negotiation Flow Integration Tests", () => {
   describe("State Transitions and Validation", () => {
     it("should reject counter-offer from non-counterparty", async () => {
       (pool.query as jest.Mock).mockResolvedValueOnce({
-        rows: [{ id: mockSwapId, state: "proposed", counterparty_id: mockUserB }],
+        rows: [],
       });
 
       const response = await request(app)
-        .post(`/swaps/${mockSwapId}/counter`)
+        .patch(`/swaps/${mockSwapId}/counter`)
         .set("x-user-id", mockUserA) // Wrong user (proposer trying to counter)
         .send({ message: "Counter offer" });
 
@@ -258,7 +265,7 @@ describe("Swap Negotiation Flow Integration Tests", () => {
       });
 
       const response = await request(app)
-        .post(`/swaps/${mockSwapId}/accept`)
+        .patch(`/swaps/${mockSwapId}/accept`)
         .set("x-user-id", "unauthorized-user");
 
       expect(response.status).toBe(400);
@@ -271,7 +278,7 @@ describe("Swap Negotiation Flow Integration Tests", () => {
         .mockResolvedValueOnce({ rows: [{ id: mockListingA, is_locked: false, current_swap_id: mockSwapId }] }); // Only one listing available
 
       const response = await request(app)
-        .post(`/swaps/${mockSwapId}/accept`)
+        .patch(`/swaps/${mockSwapId}/accept`)
         .set("x-user-id", mockUserA);
 
       expect(response.status).toBe(409);
@@ -284,7 +291,7 @@ describe("Swap Negotiation Flow Integration Tests", () => {
       });
 
       const response = await request(app)
-        .post(`/swaps/${mockSwapId}/reject`)
+        .patch(`/swaps/${mockSwapId}/reject`)
         .set("x-user-id", mockUserB);
 
       expect(response.status).toBe(200);

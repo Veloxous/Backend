@@ -89,7 +89,7 @@ router.post("/", async (req, res) => {
 /**
  * Counter-offer a swap proposal
  */
-router.post("/:id/counter", async (req, res) => {
+router.patch("/:id/counter", async (req, res) => {
   try {
     const { id } = req.params;
     const { message, new_terms } = req.body as CounterOfferRequest;
@@ -131,7 +131,7 @@ router.post("/:id/counter", async (req, res) => {
 /**
  * Accept a swap proposal or counter-offer
  */
-router.post("/:id/accept", async (req, res) => {
+router.patch("/:id/accept", async (req, res) => {
   try {
     const { id } = req.params;
     const user_id = req.headers["x-user-id"] as string;
@@ -233,7 +233,7 @@ router.post("/:id/accept", async (req, res) => {
 /**
  * Reject a swap proposal
  */
-router.post("/:id/reject", async (req, res) => {
+router.patch("/:id/reject", async (req, res) => {
   try {
     const { id } = req.params;
     const user_id = req.headers["x-user-id"] as string;
