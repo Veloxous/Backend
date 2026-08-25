@@ -36,7 +36,7 @@ describe("Concurrency Tests: Swap Accept Race Conditions", () => {
     app.use("/swaps", swapsRouter);
 
     // Mock services
-    mockValuationService = new ValuationService() as jest.Mocked<ValuationService>;
+    mockValuationService = ValuationService.prototype as jest.Mocked<ValuationService>;
     mockSwapTimeoutWorker = SwapTimeoutWorker as jest.Mocked<typeof SwapTimeoutWorker>;
 
     // Mock withTransaction to simulate database row locking
@@ -145,7 +145,7 @@ describe("Concurrency Tests: Swap Accept Race Conditions", () => {
       // Fire 10 simultaneous accept requests
       const requests = Array.from({ length: 10 }, () =>
         request(app)
-          .post(`/swaps/${mockSwapId}/accept`)
+          .patch(`/swaps/${mockSwapId}/accept`)
           .set("x-user-id", mockUserA)
       );
 
@@ -159,7 +159,7 @@ describe("Concurrency Tests: Swap Accept Race Conditions", () => {
       console.log(`Results: ${successes.length} success, ${conflicts.length} conflicts, ${errors.length} errors`);
 
       // Assertions
-      expect(successes.length).toBe(1);
+      console.log(responses[0].body); expect(successes.length).toBe(1);
       expect(conflicts.length + errors.length).toBe(9);
 
       // Verify the successful response
@@ -216,6 +216,24 @@ describe("Concurrency Tests: Swap Accept Race Conditions", () => {
           }
         });
 
+        // Third query: update swap to agreed (only called for successful request)
+        mockClient.query.mockResolvedValueOnce({
+          rows: [
+            {
+              id: mockSwapId,
+              state: "agreed",
+              agreed_at: new Date().toISOString(),
+              party_a_collateral_amount: 1500,
+              party_b_collateral_amount: 800,
+              top_up_amount: null,
+              top_up_recipient: null,
+            },
+          ],
+        });
+
+        // Fourth query: update listings
+        mockClient.query.mockResolvedValueOnce({});
+
         try {
           const result = await callback(mockClient as any);
           return result;
@@ -234,15 +252,12 @@ describe("Concurrency Tests: Swap Accept Race Conditions", () => {
 
       mockSwapTimeoutWorker.scheduleSwapMonitoring.mockResolvedValue(undefined);
 
-      // Update query for successful accept
-      (pool.query as jest.Mock).mockResolvedValueOnce({
-        rows: [{ id: mockSwapId, state: "agreed", agreed_at: new Date().toISOString() }],
-      });
+      // Removed mock pool.query as it's now handled by mockClient
 
       // Fire 5 simultaneous requests
       const requests = Array.from({ length: 5 }, () =>
         request(app)
-          .post(`/swaps/${mockSwapId}/accept`)
+          .patch(`/swaps/${mockSwapId}/accept`)
           .set("x-user-id", mockUserA)
       );
 
@@ -251,7 +266,7 @@ describe("Concurrency Tests: Swap Accept Race Conditions", () => {
       const successes = responses.filter((r: any) => r.status === 200);
       const conflicts = responses.filter((r: any) => r.status === 409);
 
-      expect(successes.length).toBe(1);
+      console.log(responses[0].body); expect(successes.length).toBe(1);
       expect(conflicts.length).toBe(4);
     });
   });
@@ -306,7 +321,7 @@ describe("Concurrency Tests: Swap Accept Race Conditions", () => {
       // Fire 3 simultaneous counter-offer requests
       const requests = Array.from({ length: 3 }, (_, i) =>
         request(app)
-          .post(`/swaps/${mockSwapId}/counter`)
+          .patch(`/swaps/${mockSwapId}/counter`)
           .set("x-user-id", mockUserB)
           .send({ message: `Counter offer ${i + 1}` })
       );
@@ -316,7 +331,7 @@ describe("Concurrency Tests: Swap Accept Race Conditions", () => {
       const successes = responses.filter((r: any) => r.status === 200);
       const failures = responses.filter((r: any) => r.status === 400);
 
-      expect(successes.length).toBe(1);
+      console.log(responses[0].body); expect(successes.length).toBe(1);
       expect(failures.length).toBe(2);
     });
   });
@@ -365,7 +380,7 @@ describe("Concurrency Tests: Swap Accept Race Conditions", () => {
       // Fire 3 simultaneous reject requests
       const requests = Array.from({ length: 3 }, () =>
         request(app)
-          .post(`/swaps/${mockSwapId}/reject`)
+          .patch(`/swaps/${mockSwapId}/reject`)
           .set("x-user-id", mockUserB)
       );
 
@@ -374,7 +389,7 @@ describe("Concurrency Tests: Swap Accept Race Conditions", () => {
       const successes = responses.filter((r: any) => r.status === 200);
       const failures = responses.filter((r: any) => r.status === 400);
 
-      expect(successes.length).toBe(1);
+      console.log(responses[0].body); expect(successes.length).toBe(1);
       expect(failures.length).toBe(2);
     });
   });
@@ -440,14 +455,14 @@ describe("Concurrency Tests: Swap Accept Race Conditions", () => {
       // Fire mixed operations
       const requests = [
         request(app)
-          .post(`/swaps/${mockSwapId}/accept`)
+          .patch(`/swaps/${mockSwapId}/accept`)
           .set("x-user-id", mockUserA),
         request(app)
-          .post(`/swaps/${mockSwapId}/counter`)
+          .patch(`/swaps/${mockSwapId}/counter`)
           .set("x-user-id", mockUserB)
           .send({ message: "Counter" }),
         request(app)
-          .post(`/swaps/${mockSwapId}/reject`)
+          .patch(`/swaps/${mockSwapId}/reject`)
           .set("x-user-id", mockUserB),
       ];
 
@@ -456,7 +471,7 @@ describe("Concurrency Tests: Swap Accept Race Conditions", () => {
       const successes = responses.filter((r: any) => r.status === 200);
       const failures = responses.filter((r: any) => r.status === 400 || r.status === 409);
 
-      expect(successes.length).toBe(1);
+      console.log(responses[0].body); expect(successes.length).toBe(1);
       expect(failures.length).toBe(2);
     });
   });
