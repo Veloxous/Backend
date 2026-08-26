@@ -41,6 +41,10 @@ app.use("/repair", repairRouter);
 // Listings routes
 app.use("/listings", listingsRouter);
 
+// Image upload routes
+import uploadsRouter from "./routes/uploads.routes";
+app.use("/uploads", uploadsRouter);
+
 // Example webhook endpoint for Supabase / Soroban events
 app.post("/webhooks/escrow", (req, res) => {
   const event = req.body;
