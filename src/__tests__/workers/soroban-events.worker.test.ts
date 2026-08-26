@@ -2,6 +2,7 @@ import { SorobanEventsWorker } from "../../workers/soroban-events.worker";
 import { SorobanService } from "../../services/stellar/soroban.service";
 import { pool, withTransaction } from "../../db/db";
 import { xdr, StrKey, Address } from "@stellar/stellar-sdk";
+import { NotificationService, NotificationType } from "../../services/notification.service";
 
 jest.mock("../../services/stellar/soroban.service");
 jest.mock("../../db/db", () => ({
@@ -9,6 +10,15 @@ jest.mock("../../db/db", () => ({
     query: jest.fn(),
   },
   withTransaction: jest.fn(),
+}));
+jest.mock("../../services/notification.service", () => ({
+  NotificationService: { send: jest.fn() },
+  NotificationType: {
+    ESCROW_FUNDED: "ESCROW_FUNDED",
+    ITEM_SHIPPED: "ITEM_SHIPPED",
+    DISPUTE_RAISED: "DISPUTE_RAISED",
+    REPUTATION_TIER_CHANGED: "REPUTATION_TIER_CHANGED",
+  },
 }));
 
 // ── XDR helpers ──────────────────────────────────────────────────────────────
@@ -286,6 +296,79 @@ describe("SorobanEventsWorker", () => {
         expect.stringContaining("UPDATE indexer_state SET last_processed_ledger = $1"),
         [1003]
       );
+    });
+
+    describe("Notification triggers", () => {
+      it("sends an ESCROW_FUNDED notification with the party address as userId when an EscrowFunded event commits", async () => {
+        setupHappyPathDb();
+        const addr = contractAddressScVal();
+        mockSorobanService.getLatestLedger.mockResolvedValue(1005);
+        mockSorobanService.getEvents.mockResolvedValue([
+          makeEvent({
+            id: "e1",
+            txHash: "tx_funded",
+            topic: [symbolTopic("EscrowFunded"), addr.scVal],
+            value: { xdr: i128ScVal(BigInt(250)) },
+          }),
+        ] as any);
+
+        await (worker as any).processNextBatch();
+
+        expect(NotificationService.send).toHaveBeenCalledWith({
+          type: NotificationType.ESCROW_FUNDED,
+          userId: addr.strKey,
+          payload: { transactionId: "tx_funded", amount: "250" },
+        });
+      });
+
+      it("sends a DISPUTE_RAISED notification when a DisputeRaised event commits", async () => {
+        setupHappyPathDb();
+        const addr = contractAddressScVal();
+        mockSorobanService.getLatestLedger.mockResolvedValue(1005);
+        mockSorobanService.getEvents.mockResolvedValue([
+          makeEvent({
+            id: "e1",
+            txHash: "tx_dispute",
+            topic: [symbolTopic("DisputeRaised"), addr.scVal],
+          }),
+        ] as any);
+
+        await (worker as any).processNextBatch();
+
+        expect(NotificationService.send).toHaveBeenCalledWith({
+          type: NotificationType.DISPUTE_RAISED,
+          userId: addr.strKey,
+          payload: { transactionId: "tx_dispute", amount: "0" },
+        });
+      });
+
+      it("does not notify for event types with no mapped notification (e.g. EscrowReleased)", async () => {
+        setupHappyPathDb();
+        mockSorobanService.getLatestLedger.mockResolvedValue(1005);
+        mockSorobanService.getEvents.mockResolvedValue([
+          makeEvent({ id: "e1", txHash: "tx_released", topic: [symbolTopic("EscrowReleased")] }),
+        ] as any);
+
+        await (worker as any).processNextBatch();
+
+        expect(NotificationService.send).not.toHaveBeenCalled();
+      });
+
+      it("does not fail event processing or block the cursor when NotificationService.send rejects", async () => {
+        setupHappyPathDb();
+        (NotificationService.send as jest.Mock).mockRejectedValue(new Error("queue unavailable"));
+        mockSorobanService.getLatestLedger.mockResolvedValue(1005);
+        mockSorobanService.getEvents.mockResolvedValue([
+          makeEvent({ id: "e1", txHash: "tx_funded", topic: [symbolTopic("EscrowFunded")] }),
+        ] as any);
+
+        await expect((worker as any).processNextBatch()).resolves.not.toThrow();
+
+        expect(pool.query).toHaveBeenCalledWith(
+          expect.stringContaining("UPDATE indexer_state SET last_processed_ledger = $1"),
+          [1003]
+        );
+      });
     });
   });
 
