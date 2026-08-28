@@ -1,6 +1,7 @@
 import { SorobanService } from "../services/stellar/soroban.service";
 import { pool, withTransaction } from "../db/db";
 import { rpc, xdr, Address } from "@stellar/stellar-sdk";
+import { NotificationService, NotificationType } from "../services/notification.service";
 
 const LAG_THRESHOLD = 100;
 const FINALITY_BUFFER = 2; // Process up to (latest - 2)
@@ -127,6 +128,40 @@ export class SorobanEventsWorker {
       );
     });
     console.log(`[SorobanEventsWorker] Successfully processed event TX: ${parsedData.transaction_id}`);
+
+    await this.notifyForEvent(parsedData);
+  }
+
+  /**
+   * Best-effort notification dispatch for the subset of on-chain events that
+   * are user-facing. Failures here are logged, never rethrown — a
+   * notification outage must not block cursor advancement or reprocess an
+   * already-committed event.
+   */
+  private async notifyForEvent(parsedData: { transaction_id: string; event_type: string; amount: string; party: string }) {
+    const NOTIFICATION_TYPE_BY_EVENT: Partial<Record<string, NotificationType>> = {
+      EscrowFunded: NotificationType.ESCROW_FUNDED,
+      DisputeRaised: NotificationType.DISPUTE_RAISED,
+    };
+
+    const notificationType = NOTIFICATION_TYPE_BY_EVENT[parsedData.event_type];
+    if (!notificationType) return;
+
+    try {
+      await NotificationService.send({
+        type: notificationType,
+        userId: parsedData.party,
+        payload: {
+          transactionId: parsedData.transaction_id,
+          amount: parsedData.amount,
+        },
+      });
+    } catch (error) {
+      console.error(
+        `[SorobanEventsWorker] Failed to send ${parsedData.event_type} notification for TX ${parsedData.transaction_id}:`,
+        error
+      );
+    }
   }
 
   private async writeToDlq(transactionId: string, rawXdr: string, errorMessage: string): Promise<void> {

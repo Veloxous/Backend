@@ -4,6 +4,7 @@ import helmet from "helmet";
 import dotenv from "dotenv";
 import { SorobanEventsWorker } from "./workers/soroban-events.worker";
 import { SwapTimeoutWorker } from "./workers/swap-timeout.worker";
+import { NotificationWorker } from "./workers/notification.worker";
 import swapsRouter from "./routes/swaps";
 import repairRouter from "./routes/repair.routes";
 import listingsRouter from "./routes/listings.routes";
@@ -80,6 +81,12 @@ app.listen(PORT, async () => {
     const swapWorker = new SwapTimeoutWorker();
     swapWorker.start().catch(err => {
       console.error("Failed to start swap timeout worker:", err);
+    });
+
+    // Start Notification Worker
+    const notificationWorker = new NotificationWorker();
+    notificationWorker.start().catch(err => {
+      console.error("Failed to start notification worker:", err);
     });
   }
 });
